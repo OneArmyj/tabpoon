@@ -1,0 +1,205 @@
+*tabpoon.txt*        Tab-oriented file slots for Neovim
+
+===============================================================================
+CONTENTS                                                       *tabpoon-contents*
+
+1. Introduction                                      |tabpoon-introduction|
+2. Requirements                                      |tabpoon-requirements|
+3. Installation                                      |tabpoon-installation|
+4. Setup                                             |tabpoon-setup|
+5. API                                               |tabpoon-api|
+6. Menu                                              |tabpoon-menu|
+7. Commands                                          |tabpoon-commands|
+8. Storage                                           |tabpoon-storage|
+9. Tests                                             |tabpoon-tests|
+10. Health                                           |tabpoon-health|
+
+===============================================================================
+INTRODUCTION                                             *tabpoon-introduction*
+
+Tabpoon is a tab-oriented, Harpoon-style plugin for project-local file slots.
+It saves important files per workspace, opens them as Neovim tabs, keeps managed
+files grouped in the tabline, and restores them when Neovim starts in the same
+project.
+
+Tabpoon treats saved files as one logical tab group. It can close that group
+without disturbing unrelated tabs, open LSP definitions in the next available
+slot, and fall back to vertical splits when the configured slot limit is full.
+
+===============================================================================
+REQUIREMENTS                                             *tabpoon-requirements*
+
+Tabpoon supports Neovim 0.10 and newer.
+
+Required dependencies: none beyond Neovim.
+
+Optional dependencies:
+- telescope.nvim for `require("tabpoon").create_tab({ find_files = true })`.
+- A Nerd Font for the default tabline slot icons.
+
+===============================================================================
+INSTALLATION                                           *tabpoon-installation*
+
+Example lazy.nvim spec:
+>
+  {
+    "OneArmyj/tabpoon",
+    config = function()
+      require("tabpoon").setup()
+    end,
+  }
+<
+
+For local development:
+>
+  {
+    "OneArmyj/tabpoon",
+    dir = vim.fn.expand("~/coding/tabpoon"),
+    config = function()
+      require("tabpoon").setup()
+    end,
+  }
+<
+
+===============================================================================
+SETUP                                                           *tabpoon-setup*
+
+Default options:
+>
+  require("tabpoon").setup({
+    storage_dir = vim.fn.stdpath("data") .. "/tabpoon/workspaces",
+    fallback_quit = nil,
+    max_tabs = 9,
+    appearance = {
+      active = "TabpoonActive",
+      inactive = "TabpoonInactive",
+      fill = "TabpoonFill",
+      active_link = "Special",
+      inactive_link = "TabLine",
+      fill_link = "TabLineFill",
+    },
+  })
+<
+
+`fallback_quit` may be a command name, a Lua function, or empty/nil to use
+`:quit`. It is used when Tabpoon delegates to normal quitting behavior.
+
+`max_tabs` limits saved Tabpoon slots. It defaults to `9`, and user values must
+be integers from `1` to `9`.
+
+`setup()` is idempotent. Calling it again replaces the previous configuration
+with defaults plus the new options, instead of merging into old user values.
+
+===============================================================================
+API                                                               *tabpoon-api*
+
+`require("tabpoon").setup(opts)`
+    Configure Tabpoon, load workspace state, install tabline integration, and
+    register commands/autocmds.
+
+`require("tabpoon").remove()`
+    Remove the current file from saved Tabpoon items. The live window remains
+    open and becomes a normal Neovim window.
+
+`require("tabpoon").clear()`
+    Clear all saved Tabpoon items for the current workspace and close their
+    live Tabpoon tabs/windows. Non-Tabpoon tabs and splits are preserved. If
+    modified-buffer confirmation is cancelled, clear is aborted.
+
+`require("tabpoon").create_tab(opts)`
+    Create or focus a pending Tabpoon tab. Pass `{ find_files = true }` to open
+    telescope.nvim file selection in that pending tab. Creation is blocked when
+    `max_tabs` has been reached.
+
+`require("tabpoon").has_capacity()`
+    Return true when another saved Tabpoon slot can be created under `max_tabs`.
+
+`require("tabpoon").max_tabs()`
+    Return the configured saved-slot limit.
+
+`require("tabpoon").open_path(path, opts)`
+    Open a file path in an existing Tabpoon slot when already saved, in the next
+    saved slot when capacity is available, or in a vertical split when full.
+    `opts.row` and `opts.col` optionally restore a target cursor location.
+    Returns `(ok, mode)`.
+
+`require("tabpoon").lsp_definition(opts)`
+    Request the first LSP definition target for the current buffer and open it
+    through `open_path()`. This is intended for `gd` mappings.
+
+`require("tabpoon").delete_current()`
+    Delete the current Tabpoon tab and close its live tab/window when possible.
+
+`require("tabpoon").select(index)`
+    Open a saved Tabpoon item by index.
+
+`require("tabpoon").toggle_menu()`
+    Toggle the floating Tabpoon menu.
+
+`require("tabpoon").smart_quit()`
+    Close the Tabpoon group from Tabpoon-owned windows, otherwise delegate to
+    configured fallback quit behavior.
+
+`require("tabpoon").tabline()`
+    Render the configured tabline expression.
+
+===============================================================================
+MENU                                                             *tabpoon-menu*
+
+Inside the floating menu:
+
+`<CR>`      Open the selected saved tab.
+`dd`        Delete the selected saved tab and close its live tab/window.
+`K`         Move the selected item up.
+`J`         Move the selected item down.
+`q`         Close the menu.
+`<Esc>`     Close the menu.
+
+The active Tabpoon tab is highlighted in the menu.
+
+===============================================================================
+COMMANDS                                                     *tabpoon-commands*
+
+`:TabpoonQuit[!]`
+    Close the Tabpoon group from a Tabpoon-owned window. Outside Tabpoon, fall
+    back to `:quit` or `:quit!`. Floating windows do not prevent the whole
+    Tabpoon group from closing.
+
+Tabpoon also installs exact command-line abbreviations so `:q`, `:quit`, `:q!`,
+and `:quit!` route through `:TabpoonQuit`.
+
+===============================================================================
+STORAGE                                                       *tabpoon-storage*
+
+Tabpoon stores one JSON file per workspace under:
+>
+  stdpath("data") .. "/tabpoon/workspaces/<workspace-hash>.json"
+<
+
+The workspace hash is `sha256(cwd)`, where `cwd` is the current working
+directory where Neovim was started. Paths under the workspace root are stored
+relative to the root; paths outside the workspace are stored as absolute paths.
+
+State writes use a temporary file followed by an atomic rename where supported,
+reducing the chance of a partially written JSON file after interruption.
+
+===============================================================================
+TESTS                                                           *tabpoon-tests*
+
+From the repository root:
+>
+  nvim --headless --clean --cmd "set rtp+=." +"luafile tests/run.lua" +"qa!"
+<
+
+===============================================================================
+HEALTH                                                         *tabpoon-health*
+
+Run:
+>
+  :checkhealth tabpoon
+<
+
+The health check verifies the Neovim version, storage directory writability,
+and whether optional telescope.nvim integration is available.
+
+vim:tw=78:ts=8:ft=help:norl:
